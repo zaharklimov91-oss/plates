@@ -1,5 +1,7 @@
 name: Build APK
 on: workflow_dispatch
+permissions:
+  contents: write
 jobs:
   apk:
     runs-on: ubuntu-latest
@@ -12,11 +14,19 @@ jobs:
       - run: mkdir -p www && cp "$(ls *.html | head -1)" www/index.html
       - run: npm install
       - run: npx cap add android
+      - name: Иконка
+        run: |
+          f="$(ls *.png *.jpg *.jpeg 2>/dev/null | head -1)"
+          if [ -n "$f" ]; then
+            mkdir -p assets && cp "$f" "assets/icon.${f##*.}"
+            npm install --no-save @capacitor/assets
+            npx capacitor-assets generate --android --iconBackgroundColor '#0a0e1a'
+          fi
       - run: sed -i 's/<activity/<activity android:screenOrientation="portrait"/' android/app/src/main/AndroidManifest.xml
       - run: npx cap sync android
       - working-directory: android
         run: chmod +x gradlew && ./gradlew assembleDebug
-      - uses: actions/upload-artifact@v4
+      - uses: softprops/action-gh-release@v2
         with:
-          name: plates-game-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          tag_name: apk-${{ github.run_number }}
+          files: android/app/build/outputs/apk/debug/app-debug.apk
