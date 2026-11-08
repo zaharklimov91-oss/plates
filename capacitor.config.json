@@ -3,5 +3,6 @@
   "appName": "НОМЕРА РФ",
   "webDir": "www",
   "backgroundColor": "#0a0e1a",
-  "server": { "androidScheme": "https" }
+  "server": { "androidScheme": "https" },
+  "plugins": { "CapacitorHttp": { "enabled": true } }
 }
