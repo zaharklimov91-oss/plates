@@ -1,0 +1,7 @@
+{
+  "appId": "ru.plates.game",
+  "appName": "Номера",
+  "webDir": "www",
+  "backgroundColor": "#0a0e1a",
+  "server": { "androidScheme": "https" }
+}
