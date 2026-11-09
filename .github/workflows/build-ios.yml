@@ -1,10 +1,17 @@
 name: Build iOS IPA
 
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: macOS runner
+        type: choice
+        default: macos-latest
+        options: [macos-latest, macos-15, macos-14, macos-13]
 
 jobs:
   ios:
-    runs-on: macos-latest
+    runs-on: ${{ inputs.runner }}
     env:
       TEAM_ID: R7KYNP3649
       BUNDLE_ID: app.bamboo3965.leo5976
