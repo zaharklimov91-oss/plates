@@ -1,0 +1,84 @@
+name: Build iOS IPA
+
+on: workflow_dispatch
+
+jobs:
+  ios:
+    runs-on: macos-latest
+    env:
+      TEAM_ID: R7KYNP3649
+      BUNDLE_ID: app.bamboo3965.leo5976
+      KC: ${{ runner.temp }}/build.keychain-db
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+
+      - name: Web + Capacitor iOS
+        run: |
+          mkdir -p www
+          [ -f index15.html ] && mv -f index15.html www/index.html
+          npm install
+          [ -d ios ] || npx cap add ios
+          npx cap sync ios
+
+      - name: Import p12 and mobileprovision
+        env:
+          P12_BASE64: ${{ secrets.P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          MOBILEPROVISION_BASE64: ${{ secrets.MOBILEPROVISION_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo "$P12_BASE64" | base64 --decode > cert.p12
+          echo "$MOBILEPROVISION_BASE64" | base64 --decode > profile.mobileprovision
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KC"
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          security import cert.p12 -k "$KC" -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KC"
+          security cms -D -i profile.mobileprovision > profile.plist
+          UUID=$(plutil -extract UUID raw profile.plist)
+          echo "PROFILE_NAME=$(plutil -extract Name raw profile.plist)" >> $GITHUB_ENV
+          echo "EXPORT_METHOD=ad-hoc" >> $GITHUB_ENV
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp profile.mobileprovision "$HOME/Library/MobileDevice/Provisioning Profiles/$UUID.mobileprovision"
+
+      - name: Archive
+        run: |
+          WS=$(ls -d ios/App/*.xcworkspace | head -n1)
+          xcodebuild -workspace "$WS" -scheme App -configuration Release -sdk iphoneos \
+            -archivePath build/App.xcarchive archive \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="iPhone Distribution" \
+            DEVELOPMENT_TEAM="$TEAM_ID" PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID"
+
+      - name: Export IPA
+        run: |
+          cat > ExportOptions.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>$EXPORT_METHOD</string>
+            <key>teamID</key><string>$TEAM_ID</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>provisioningProfiles</key><dict>
+              <key>$BUNDLE_ID</key><string>$PROFILE_NAME</string>
+            </dict>
+          </dict></plist>
+          EOF
+          xcodebuild -exportArchive -archivePath build/App.xcarchive \
+            -exportPath build/export -exportOptionsPlist ExportOptions.plist
+          mv build/export/*.ipa build/App.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: App-ipa
+          path: build/App.ipa
+
+      - name: Cleanup
+        if: always()
+        run: |
+          security delete-keychain "$KC" || true
+          rm -f cert.p12 profile.mobileprovision
