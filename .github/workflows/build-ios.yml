@@ -8,7 +8,6 @@ jobs:
     env:
       TEAM_ID: R7KYNP3649
       BUNDLE_ID: app.bamboo3965.leo5976
-      KC: ${{ runner.temp }}/build.keychain-db
     steps:
       - uses: actions/checkout@v4
 
@@ -30,6 +29,7 @@ jobs:
           MOBILEPROVISION_BASE64: ${{ secrets.MOBILEPROVISION_BASE64 }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
+          KC="$RUNNER_TEMP/build.keychain-db"
           echo "$P12_BASE64" | base64 --decode > cert.p12
           echo "$MOBILEPROVISION_BASE64" | base64 --decode > profile.mobileprovision
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KC"
@@ -80,5 +80,5 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          security delete-keychain "$KC" || true
+          security delete-keychain "$RUNNER_TEMP/build.keychain-db" || true
           rm -f cert.p12 profile.mobileprovision
