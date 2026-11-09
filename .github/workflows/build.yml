@@ -14,6 +14,10 @@ jobs:
       - run: mkdir -p www && cp "$(ls *.html | head -1)" www/index.html
       - run: npm install
       - run: npx cap add android
+      - name: Полный экран без часов и процентов
+        run: |
+          f=android/app/src/main/res/values/styles.xml
+          perl -0pi -e 's#(<style name="AppTheme\.NoActionBar[A-Za-z]*"[^>]*>)#$1\n        <item name="android:windowFullscreen">true</item>#g' $f
       - name: Иконка
         run: |
           f="$(ls *.png *.jpg *.jpeg 2>/dev/null | head -1)"
