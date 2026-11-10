@@ -1,0 +1,55 @@
+name: Build iOS IPA (unsigned)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install & prepare Capacitor iOS
+        run: |
+          npm install --no-save
+          mkdir -p www && cp "$(ls *.html | head -1)" www/index.html
+          if [ ! -d ios ]; then
+            npx @capacitor/cli@latest add ios || true
+          fi
+          npx cap sync ios
+
+      - name: Archive (unsigned)
+        run: |
+          WS=$(ls -d ios/App/*.xcworkspace 2>/dev/null | head -n1)
+          if [ -z "$WS" ]; then
+            echo "No xcworkspace found!"
+            ls -la ios/ || true
+            exit 1
+          fi
+          echo "Building from: $WS"
+          xcodebuild -workspace "$WS" -scheme App -configuration Release -sdk iphoneos \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" archive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO || exit 1
+
+      - name: Package IPA
+        run: |
+          if [ ! -d "$RUNNER_TEMP/App.xcarchive/Products/Applications/App.app" ]; then
+            echo "App.app not found in archive!"
+            ls -la "$RUNNER_TEMP/App.xcarchive/Products/Applications/" || true
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$RUNNER_TEMP/App.xcarchive/Products/Applications/App.app" "$RUNNER_TEMP/ipa/Payload/"
+          cd "$RUNNER_TEMP/ipa"
+          zip -qr App.ipa Payload
+          mkdir -p build
+          cp App.ipa "$GITHUB_WORKSPACE/build/App.ipa"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-ipa
+          path: build/App.ipa
