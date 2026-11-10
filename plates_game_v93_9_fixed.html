@@ -1228,9 +1228,52 @@ body.rev-hint #revHint{opacity:.85}
 .stage-card .price-line.stk{flex-direction:column!important;justify-content:flex-start!important;align-items:center!important;overflow:visible!important;line-height:18px!important}
 .price-line .fl{animation:flIn .5s ease-out both}
 @keyframes flIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+
+/* v93.10: «шторка» сверху — отступ под системную строку телефона
+   (часы, зарядка, уведомления, вай-фай), чтобы она не наезжала на кнопку «назад» */
+:root{--curtain-h:0px;--curtain-disp:none}
+@media (pointer:coarse),(hover:none){
+  :root{--curtain-h:calc(max(env(safe-area-inset-top,0px),30px) + 10px);--curtain-disp:block}
+}
+html.curtain-on{--curtain-h:calc(max(env(safe-area-inset-top,0px),30px) + 10px);--curtain-disp:block}
+#topCurtain{position:fixed;top:0;left:0;right:0;height:var(--curtain-h);z-index:200;pointer-events:none;
+  display:var(--curtain-disp);
+  background:#05070d;
+  border-bottom:1px solid rgba(148,163,184,.12);
+  box-shadow:0 6px 16px -12px #000}
+@supports ((-webkit-backdrop-filter:blur(12px)) or (backdrop-filter:blur(12px))){
+  #topCurtain{background:rgba(5,7,13,.82);-webkit-backdrop-filter:blur(14px) saturate(120%);backdrop-filter:blur(14px) saturate(120%)}
+}
+#topCurtain::after{content:"";position:absolute;left:50%;bottom:4px;width:50px;height:3px;margin-left:-25px;border-radius:3px;background:rgba(148,163,184,.2)}
+body{padding-top:calc(var(--curtain-h) + 12px)}
+.menu{padding-top:calc(var(--curtain-h) + 16px)}
+.price-sheet{padding-top:calc(var(--curtain-h) + 20px)}
+.toast{top:calc(var(--curtain-h) + 14px)}
+.ps-card{max-height:calc(100vh - var(--curtain-h) - 60px);max-height:calc(100dvh - var(--curtain-h) - 60px)}
 </style>
 </head>
 <body>
+<div id="topCurtain" aria-hidden="true"></div>
+<script>
+/* v93.10: включаем «шторку» на телефонах/планшетах, в PWA и полноэкранном режиме */
+(function () {
+  function isMobileShell() {
+    var mq = window.matchMedia;
+    if (mq) {
+      if (mq('(pointer:coarse)').matches || mq('(hover:none)').matches) return true;
+      if (mq('(display-mode:standalone)').matches || mq('(display-mode:fullscreen)').matches) return true;
+    }
+    if ((navigator.maxTouchPoints || 0) > 0 && window.innerWidth <= 820) return true;
+    return false;
+  }
+  function sync() {
+    document.documentElement.classList.toggle('curtain-on', isMobileShell());
+  }
+  sync();
+  window.addEventListener('resize', sync);
+  window.addEventListener('orientationchange', sync);
+})();
+</script>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
   <linearGradient id="gGold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fde68a"/><stop offset="1" stop-color="#f59e0b"/></linearGradient>
