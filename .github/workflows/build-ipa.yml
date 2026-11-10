@@ -6,8 +6,6 @@ on:
 jobs:
   build-ios:
     runs-on: macos-latest
-    env:
-      KEYCHAIN_DB: ${{ runner.temp }}/build.keychain-db
     steps:
       - uses: actions/checkout@v4
 
@@ -41,12 +39,14 @@ jobs:
           P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
+          KEYCHAIN_DB="${{ runner.temp }}/build.keychain-db"
           echo "$P12_BASE64" | base64 --decode > cert.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_DB"
           security default-keychain -s "$KEYCHAIN_DB"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_DB"
           security import cert.p12 -k "$KEYCHAIN_DB" -P "$P12_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,system: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_DB"
+          echo "KEYCHAIN_DB=$KEYCHAIN_DB" >> $GITHUB_ENV
           rm -f cert.p12
 
       - name: Setup provisioning profile
@@ -63,8 +63,6 @@ jobs:
           rm -f profile.mobileprovision
 
       - name: Build archive
-        env:
-          PROFILE_NAME: ${{ env.PROFILE_NAME }}
         run: |
           WS=$(find ios -name "*.xcworkspace" -type d | head -1)
           if [ -z "$WS" ]; then
@@ -76,10 +74,10 @@ jobs:
             -scheme App \
             -configuration Release \
             -sdk iphoneos \
-            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -archivePath "${{ runner.temp }}/App.xcarchive" \
             archive \
             -allowProvisioningUpdates \
-            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            PROVISIONING_PROFILE_SPECIFIER="${{ env.PROFILE_NAME }}" \
             CODE_SIGN_IDENTITY="Apple Development"
 
       - name: Export IPA
@@ -101,11 +99,11 @@ jobs:
           </plist>
           EOF
           xcodebuild -exportArchive \
-            -archivePath "$RUNNER_TEMP/App.xcarchive" \
-            -exportPath "$RUNNER_TEMP/export" \
+            -archivePath "${{ runner.temp }}/App.xcarchive" \
+            -exportPath "${{ runner.temp }}/export" \
             -exportOptionsPlist ExportOptions.plist
           mkdir -p build
-          cp "$RUNNER_TEMP/export/App.ipa" build/App.ipa
+          cp "${{ runner.temp }}/export/App.ipa" build/App.ipa
           ls -lh build/App.ipa
 
       - name: Upload IPA
@@ -117,4 +115,6 @@ jobs:
 
       - name: Cleanup keychain
         if: always()
-        run: security delete-keychain "$KEYCHAIN_DB" || true
+        run: |
+          KEYCHAIN_DB="${{ runner.temp }}/build.keychain-db"
+          [ -n "$KEYCHAIN_DB" ] && security delete-keychain "$KEYCHAIN_DB" || true
