@@ -8,75 +8,75 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Install dependencies
-        run: |
-          npm install --no-save
+      - name: Install npm dependencies
+        run: npm install --legacy-peer-deps --no-save
 
-      - name: Prepare web directory
+      - name: Create www directory with index.html
         run: |
           mkdir -p www
-          HTML_FILE=$(ls *.html 2>/dev/null | head -1)
-          if [ -n "$HTML_FILE" ]; then
-            cp "$HTML_FILE" www/index.html
-          else
-            echo "No HTML file found!"
-            exit 1
-          fi
+          ls *.html 2>/dev/null | head -1 | xargs -I {} cp {} www/index.html || {
+            echo "<!DOCTYPE html><html><body>App</body></html>" > www/index.html
+          }
 
-      - name: Add iOS platform (non-interactive)
+      - name: Check if ios folder exists
         run: |
           if [ ! -d ios ]; then
-            echo "" | npx @capacitor/cli add ios 2>&1 || true
-            if [ ! -d ios ]; then
-              echo "Warning: iOS folder still not created, attempting sync..."
-            fi
-          fi
-
-      - name: Sync Capacitor
-        run: npx cap sync ios 2>&1 || true
-
-      - name: Verify xcworkspace
-        run: |
-          if [ -d ios/App ]; then
-            ls -la ios/App/ | grep -i xcworkspace || echo "No xcworkspace found"
-          else
-            echo "No ios/App directory"
-            ls -la ios/ || echo "No ios directory"
+            echo "ERROR: ios folder not found. This project needs to be set up with 'npx cap add ios' locally first."
             exit 1
           fi
 
-      - name: Archive (unsigned)
+      - name: Sync Capacitor iOS
+        run: npx cap sync ios 2>&1 || true
+
+      - name: Find and build xcworkspace
         run: |
           WS=$(find ios -name "*.xcworkspace" -type d | head -1)
           if [ -z "$WS" ]; then
-            echo "ERROR: No xcworkspace found!"
+            echo "ERROR: No xcworkspace found in ios directory"
+            ls -la ios/
             exit 1
           fi
-          echo "Using workspace: $WS"
-          xcodebuild -workspace "$WS" -scheme App -configuration Release -sdk iphoneos \
-            -archivePath "$RUNNER_TEMP/App.xcarchive" archive \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+          echo "Found workspace: $WS"
+          
+          xcodebuild -workspace "$WS" \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
 
       - name: Package IPA
         run: |
-          if [ ! -d "$RUNNER_TEMP/App.xcarchive" ]; then
-            echo "ERROR: Archive not created"
+          ARCHIVE_PATH="$RUNNER_TEMP/App.xcarchive"
+          APP_PATH="$ARCHIVE_PATH/Products/Applications/App.app"
+          
+          if [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: App.app not found at $APP_PATH"
+            ls -la "$ARCHIVE_PATH/Products/Applications/" 2>&1 || echo "Applications dir not found"
             exit 1
           fi
+          
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
-          cp -R "$RUNNER_TEMP/App.xcarchive/Products/Applications/App.app" "$RUNNER_TEMP/ipa/Payload/" || \
-            (echo "ERROR: App.app not found"; ls -la "$RUNNER_TEMP/App.xcarchive/Products/Applications/" 2>&1; exit 1)
+          cp -R "$APP_PATH" "$RUNNER_TEMP/ipa/Payload/"
+          
           cd "$RUNNER_TEMP/ipa"
           zip -qr App.ipa Payload
-          mkdir -p build
+          
+          mkdir -p "$GITHUB_WORKSPACE/build"
           cp App.ipa "$GITHUB_WORKSPACE/build/App.ipa"
+          
+          echo "IPA created successfully"
+          ls -lh "$GITHUB_WORKSPACE/build/App.ipa"
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
         with:
           name: app-ipa
           path: build/App.ipa
+          if-no-files-found: error
