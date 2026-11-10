@@ -1,4 +1,4 @@
-name: Build iOS IPA (unsigned)
+name: Build iOS IPA
 
 on:
   workflow_dispatch:
@@ -28,16 +28,17 @@ jobs:
           xcodebuild -workspace ios/App/App.xcworkspace -scheme App -configuration Release \
             -sdk iphoneos -archivePath "$RUNNER_TEMP/App.xcarchive" archive \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            EXPANDED_CODE_SIGN_IDENTITY="" 2>&1 | tail -30
+            EXPANDED_CODE_SIGN_IDENTITY="" 2>&1 | tail -20
 
       - name: Package IPA
         run: |
           APP="$RUNNER_TEMP/App.xcarchive/Products/Applications/App.app"
           [ -d "$APP" ] || { echo "App.app missing"; ls -R "$RUNNER_TEMP/App.xcarchive/Products"; exit 1; }
-          rm -rf "$RUNNER_TEMP/ipa" && mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          rm -rf "$RUNNER_TEMP/ipa"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload" "$GITHUB_WORKSPACE/build"
           cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
-          cd "$RUNNER_TEMP/ipa" && zip -qry App.ipa Payload
-          mkdir -p build && cp App.ipa "$GITHUB_WORKSPACE/build/App-unsigned.ipa"
+          ( cd "$RUNNER_TEMP/ipa" && zip -qry App.ipa Payload )
+          cp "$RUNNER_TEMP/ipa/App.ipa" "$GITHUB_WORKSPACE/build/App-unsigned.ipa"
           ls -lh "$GITHUB_WORKSPACE/build/"
 
       - uses: actions/upload-artifact@v4
