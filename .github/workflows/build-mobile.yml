@@ -2,6 +2,8 @@ name: build-mobile
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
 
 jobs:
   android:
