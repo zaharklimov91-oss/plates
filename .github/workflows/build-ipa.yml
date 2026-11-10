@@ -13,37 +13,64 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install & prepare Capacitor iOS
+      - name: Install dependencies
         run: |
           npm install --no-save
-          mkdir -p www && cp "$(ls *.html | head -1)" www/index.html
-          if [ ! -d ios ]; then
-            npx @capacitor/cli@latest add ios || true
+
+      - name: Prepare web directory
+        run: |
+          mkdir -p www
+          HTML_FILE=$(ls *.html 2>/dev/null | head -1)
+          if [ -n "$HTML_FILE" ]; then
+            cp "$HTML_FILE" www/index.html
+          else
+            echo "No HTML file found!"
+            exit 1
           fi
-          npx cap sync ios
+
+      - name: Add iOS platform (non-interactive)
+        run: |
+          if [ ! -d ios ]; then
+            echo "" | npx @capacitor/cli add ios 2>&1 || true
+            if [ ! -d ios ]; then
+              echo "Warning: iOS folder still not created, attempting sync..."
+            fi
+          fi
+
+      - name: Sync Capacitor
+        run: npx cap sync ios 2>&1 || true
+
+      - name: Verify xcworkspace
+        run: |
+          if [ -d ios/App ]; then
+            ls -la ios/App/ | grep -i xcworkspace || echo "No xcworkspace found"
+          else
+            echo "No ios/App directory"
+            ls -la ios/ || echo "No ios directory"
+            exit 1
+          fi
 
       - name: Archive (unsigned)
         run: |
-          WS=$(ls -d ios/App/*.xcworkspace 2>/dev/null | head -n1)
+          WS=$(find ios -name "*.xcworkspace" -type d | head -1)
           if [ -z "$WS" ]; then
-            echo "No xcworkspace found!"
-            ls -la ios/ || true
+            echo "ERROR: No xcworkspace found!"
             exit 1
           fi
-          echo "Building from: $WS"
+          echo "Using workspace: $WS"
           xcodebuild -workspace "$WS" -scheme App -configuration Release -sdk iphoneos \
             -archivePath "$RUNNER_TEMP/App.xcarchive" archive \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO || exit 1
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
 
       - name: Package IPA
         run: |
-          if [ ! -d "$RUNNER_TEMP/App.xcarchive/Products/Applications/App.app" ]; then
-            echo "App.app not found in archive!"
-            ls -la "$RUNNER_TEMP/App.xcarchive/Products/Applications/" || true
+          if [ ! -d "$RUNNER_TEMP/App.xcarchive" ]; then
+            echo "ERROR: Archive not created"
             exit 1
           fi
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
-          cp -R "$RUNNER_TEMP/App.xcarchive/Products/Applications/App.app" "$RUNNER_TEMP/ipa/Payload/"
+          cp -R "$RUNNER_TEMP/App.xcarchive/Products/Applications/App.app" "$RUNNER_TEMP/ipa/Payload/" || \
+            (echo "ERROR: App.app not found"; ls -la "$RUNNER_TEMP/App.xcarchive/Products/Applications/" 2>&1; exit 1)
           cd "$RUNNER_TEMP/ipa"
           zip -qr App.ipa Payload
           mkdir -p build
