@@ -26,12 +26,21 @@ jobs:
       - name: Install npm dependencies
         run: npm install --legacy-peer-deps
 
-      - name: Add iOS platform
+      - name: Generate iOS project
         run: |
           if [ ! -d ios ]; then
-            npx @capacitor/cli@6 add ios --web-dir=www 2>&1 || true
+            # Use cap sync to generate ios folder (non-interactive mode)
+            npx @capacitor/cli sync ios --deployment 2>&1 || {
+              echo "Trying cap add ios with non-interactive input..."
+              echo "" | npx @capacitor/cli add ios --web-dir=www 2>&1 || true
+            }
           fi
-          npx cap sync ios
+          # Verify project was created
+          if [ ! -d ios ]; then
+            echo "ERROR: ios folder not created"
+            exit 1
+          fi
+          ls -la ios/
 
       - name: Setup signing certificate
         env:
@@ -40,6 +49,7 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           KEYCHAIN_DB="${{ runner.temp }}/build.keychain-db"
+          echo "Creating keychain at: $KEYCHAIN_DB"
           echo "$P12_BASE64" | base64 --decode > cert.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_DB"
           security default-keychain -s "$KEYCHAIN_DB"
@@ -56,6 +66,8 @@ jobs:
           echo "$MOBILEPROVISION_BASE64" | base64 --decode > profile.mobileprovision
           PROFILE_UUID=$(security cms -D -i profile.mobileprovision | plutil -extract UUID raw - 2>/dev/null)
           PROFILE_NAME=$(security cms -D -i profile.mobileprovision | plutil -extract Name raw - 2>/dev/null | head -1)
+          echo "Profile UUID: $PROFILE_UUID"
+          echo "Profile Name: $PROFILE_NAME"
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           cp profile.mobileprovision "$HOME/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.mobileprovision"
           echo "PROFILE_UUID=${PROFILE_UUID}" >> $GITHUB_ENV
@@ -67,9 +79,10 @@ jobs:
           WS=$(find ios -name "*.xcworkspace" -type d | head -1)
           if [ -z "$WS" ]; then
             echo "ERROR: No xcworkspace found"
-            ls -la ios/ || echo "No ios directory"
+            ls -la ios/
             exit 1
           fi
+          echo "Building from: $WS"
           xcodebuild -workspace "$WS" \
             -scheme App \
             -configuration Release \
@@ -78,7 +91,7 @@ jobs:
             archive \
             -allowProvisioningUpdates \
             PROVISIONING_PROFILE_SPECIFIER="${{ env.PROFILE_NAME }}" \
-            CODE_SIGN_IDENTITY="Apple Development"
+            CODE_SIGN_IDENTITY="Apple Development" 2>&1 | tail -50
 
       - name: Export IPA
         run: |
@@ -101,7 +114,7 @@ jobs:
           xcodebuild -exportArchive \
             -archivePath "${{ runner.temp }}/App.xcarchive" \
             -exportPath "${{ runner.temp }}/export" \
-            -exportOptionsPlist ExportOptions.plist
+            -exportOptionsPlist ExportOptions.plist 2>&1 | tail -30
           mkdir -p build
           cp "${{ runner.temp }}/export/App.ipa" build/App.ipa
           ls -lh build/App.ipa
@@ -117,4 +130,4 @@ jobs:
         if: always()
         run: |
           KEYCHAIN_DB="${{ runner.temp }}/build.keychain-db"
-          [ -n "$KEYCHAIN_DB" ] && security delete-keychain "$KEYCHAIN_DB" || true
+          [ -n "$KEYCHAIN_DB" ] && security delete-keychain "$KEYCHAIN_DB" 2>/dev/null || true
