@@ -23,24 +23,39 @@ jobs:
             echo "<html><body>App</body></html>" > www/index.html
           fi
 
-      - name: Install npm dependencies
+      - name: Install dependencies
         run: npm install --legacy-peer-deps
 
-      - name: Generate iOS project
+      - name: Generate iOS project (with retries)
         run: |
+          # Try cap sync first (non-interactive)
           if [ ! -d ios ]; then
-            # Use cap sync to generate ios folder (non-interactive mode)
-            npx @capacitor/cli sync ios --deployment 2>&1 || {
-              echo "Trying cap add ios with non-interactive input..."
-              echo "" | npx @capacitor/cli add ios --web-dir=www 2>&1 || true
-            }
+            echo "Attempting: npx cap sync ios"
+            npx @capacitor/cli sync ios 2>&1 | head -20 || true
           fi
-          # Verify project was created
+          
+          # If still no ios folder, try cap add with stdin
           if [ ! -d ios ]; then
-            echo "ERROR: ios folder not created"
+            echo "ios folder not found, trying cap add with stdin..."
+            # Use yes to answer "yes" to any prompts
+            yes | npx @capacitor/cli add ios --web-dir=www 2>&1 | head -30 || true
+          fi
+          
+          # Check if xcworkspace was created
+          if [ -d "ios/App/App.xcworkspace" ]; then
+            echo "✓ iOS project created successfully"
+            ls -la ios/App/
+          else
+            echo "✗ ERROR: iOS project creation failed"
+            if [ -d ios ]; then
+              echo "ios folder contents:"
+              ls -la ios/
+              find ios -name "*.xcworkspace" -o -name "*.xcodeproj"
+            else
+              echo "No ios folder found"
+            fi
             exit 1
           fi
-          ls -la ios/
 
       - name: Setup signing certificate
         env:
@@ -49,7 +64,6 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           KEYCHAIN_DB="${{ runner.temp }}/build.keychain-db"
-          echo "Creating keychain at: $KEYCHAIN_DB"
           echo "$P12_BASE64" | base64 --decode > cert.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_DB"
           security default-keychain -s "$KEYCHAIN_DB"
@@ -66,8 +80,6 @@ jobs:
           echo "$MOBILEPROVISION_BASE64" | base64 --decode > profile.mobileprovision
           PROFILE_UUID=$(security cms -D -i profile.mobileprovision | plutil -extract UUID raw - 2>/dev/null)
           PROFILE_NAME=$(security cms -D -i profile.mobileprovision | plutil -extract Name raw - 2>/dev/null | head -1)
-          echo "Profile UUID: $PROFILE_UUID"
-          echo "Profile Name: $PROFILE_NAME"
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           cp profile.mobileprovision "$HOME/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.mobileprovision"
           echo "PROFILE_UUID=${PROFILE_UUID}" >> $GITHUB_ENV
@@ -76,14 +88,7 @@ jobs:
 
       - name: Build archive
         run: |
-          WS=$(find ios -name "*.xcworkspace" -type d | head -1)
-          if [ -z "$WS" ]; then
-            echo "ERROR: No xcworkspace found"
-            ls -la ios/
-            exit 1
-          fi
-          echo "Building from: $WS"
-          xcodebuild -workspace "$WS" \
+          xcodebuild -workspace "ios/App/App.xcworkspace" \
             -scheme App \
             -configuration Release \
             -sdk iphoneos \
@@ -91,7 +96,7 @@ jobs:
             archive \
             -allowProvisioningUpdates \
             PROVISIONING_PROFILE_SPECIFIER="${{ env.PROFILE_NAME }}" \
-            CODE_SIGN_IDENTITY="Apple Development" 2>&1 | tail -50
+            CODE_SIGN_IDENTITY="Apple Development"
 
       - name: Export IPA
         run: |
@@ -114,7 +119,7 @@ jobs:
           xcodebuild -exportArchive \
             -archivePath "${{ runner.temp }}/App.xcarchive" \
             -exportPath "${{ runner.temp }}/export" \
-            -exportOptionsPlist ExportOptions.plist 2>&1 | tail -30
+            -exportOptionsPlist ExportOptions.plist
           mkdir -p build
           cp "${{ runner.temp }}/export/App.ipa" build/App.ipa
           ls -lh build/App.ipa
@@ -126,7 +131,7 @@ jobs:
           path: build/App.ipa
           if-no-files-found: error
 
-      - name: Cleanup keychain
+      - name: Cleanup
         if: always()
         run: |
           KEYCHAIN_DB="${{ runner.temp }}/build.keychain-db"
