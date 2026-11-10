@@ -1,0 +1,152 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    env:
+      KEYCHAIN_DB: ${{ runner.temp }}/build.keychain-db
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup web directory
+        run: |
+          mkdir -p www
+          HTML_FILE=$(ls *.html 2>/dev/null | head -1)
+          if [ -n "$HTML_FILE" ]; then
+            cp "$HTML_FILE" www/index.html
+          else
+            echo "<html><body>App</body></html>" > www/index.html
+          fi
+
+      - name: Install npm dependencies
+        run: |
+          npm install --legacy-peer-deps
+
+      - name: Add iOS platform
+        run: |
+          if [ ! -d ios ]; then
+            npx @capacitor/cli@6 add ios --web-dir=www 2>&1 || true
+          fi
+          npx cap sync ios
+
+      - name: Setup signing certificate
+        env:
+          P12_BASE64: ${{ secrets.P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          # Decode and import certificate
+          echo "$P12_BASE64" | base64 --decode > cert.p12
+          
+          # Create and unlock keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_DB"
+          security default-keychain -s "$KEYCHAIN_DB"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_DB"
+          
+          # Import certificate
+          security import cert.p12 -k "$KEYCHAIN_DB" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,system: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_DB"
+          
+          # Cleanup
+          rm -f cert.p12
+
+      - name: Setup provisioning profile
+        env:
+          MOBILEPROVISION_BASE64: ${{ secrets.MOBILEPROVISION_BASE64 }}
+        run: |
+          # Decode and install profile
+          echo "$MOBILEPROVISION_BASE64" | base64 --decode > profile.mobileprovision
+          
+          # Extract UUID and name
+          PROFILE_UUID=$(security cms -D -i profile.mobileprovision | grep -A 1 "<key>UUID</key>" | grep "<string>" | sed 's/.*<string>//;s/<\/string>.*//')
+          PROFILE_NAME=$(security cms -D -i profile.mobileprovision | grep -A 1 "<key>Name</key>" | grep "<string>" | sed 's/.*<string>//;s/<\/string>.*//' | head -1)
+          
+          echo "Profile UUID: $PROFILE_UUID"
+          echo "Profile Name: $PROFILE_NAME"
+          
+          # Install profile
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp profile.mobileprovision "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+          
+          # Save for later use
+          echo "PROFILE_UUID=$PROFILE_UUID" >> $GITHUB_ENV
+          echo "PROFILE_NAME=$PROFILE_NAME" >> $GITHUB_ENV
+          
+          rm -f profile.mobileprovision
+
+      - name: Build archive
+        run: |
+          # Find xcworkspace
+          WS=$(find ios -name "*.xcworkspace" -type d | head -1)
+          if [ -z "$WS" ]; then
+            echo "ERROR: No xcworkspace found"
+            ls -la ios/
+            exit 1
+          fi
+          
+          echo "Using workspace: $WS"
+          
+          # Get bundle ID from capacitor config
+          BUNDLE_ID=$(node -p "require('./capacitor.config.json').appId")
+          echo "Bundle ID: $BUNDLE_ID"
+          
+          # Archive
+          xcodebuild -workspace "$WS" \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            archive \
+            -allowProvisioningUpdates \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            CODE_SIGN_IDENTITY="Apple Development"
+
+      - name: Export IPA
+        run: |
+          # Create export options plist
+          cat > ExportOptions.plist <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>development</string>
+              <key>signingStyle</key>
+              <string>automatic</string>
+              <key>stripSwiftSymbols</key>
+              <true/>
+              <key>compileBitcode</key>
+              <false/>
+          </dict>
+          </plist>
+          EOF
+          
+          # Export archive to IPA
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist ExportOptions.plist
+          
+          # Copy IPA to build directory
+          mkdir -p build
+          cp "$RUNNER_TEMP/export/App.ipa" build/App.ipa
+          ls -lh build/App.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-ipa
+          path: build/App.ipa
+          if-no-files-found: error
+
+      - name: Cleanup keychain
+        if: always()
+        run: |
+          security delete-keychain "$KEYCHAIN_DB" || true
